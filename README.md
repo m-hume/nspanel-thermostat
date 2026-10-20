@@ -79,56 +79,27 @@ a relay. Letting it own the loop means:
 HA's job becomes: show the temperature, expose the setpoint and enable switch, and let
 schedules/automations *request* temperatures — the panel still executes safely on its own.
 
-### Example `mqtt` climate entity (local variant)
+### The setup we actually use
 
-```yaml
-mqtt:
-  climate:
-    - name: "Study Thermostat"
-      # current temperature straight from the panel's tele SENSOR
-      current_temperature_topic: "tele/tas_nspanel_stud/SENSOR"
-      current_temperature_template: "{{ value_json['ANALOG']['Temperature1'] }}"
+Full working config — a `generic_thermostat` climate card bridged to the panel by four
+automations — is in **[`home-assistant/`](home-assistant/README.md)**. The short version:
 
-      # setpoint: sent to the panel's ATCExpect command
-      temperature_command_topic: "cmnd/tas_nspanel_stud/ATCExpect"
-      temp_step: 0.5
-      min_temp: 5
-      max_temp: 30
+- `generic_thermostat`'s `heater` is a read-only MQTT switch with `command_topic: " "` —
+  a dead end. HA's internal switching loop can fire all it wants; nothing is published.
+  The panel does the real switching, and `hvac_action` still reflects the true relay state
+  via `stat/.../POWER1`.
+- Automations push `climate` changes → `ATCEnable`/`ATCExpect` commands, and feed the
+  panel's `{NSPanel.ATCEnable/ATCExpect0}` RESULT publishes → `climate.turn_on/off` /
+  `climate.set_temperature`, so the card stays in sync when someone uses the wall panel.
+- A `GetTele` publish on HA start resyncs state after restarts.
 
-      # on/off: ATCEnable (1=heat mode, 0=off/frost-protect)
-      mode_command_topic: "cmnd/tas_nspanel_stud/ATCEnable"
-      mode_command_template: "{{ '1' if value == 'heat' else '0' }}"
-      modes: ["off", "heat"]
-      payload_on: "1"
-      payload_off: "0"
-
-      # what the relay is actually doing
-      action_topic: "stat/tas_nspanel_stud/POWER1"
-      action_template: "{{ 'heating' if value == 'ON' else 'idle' }}"
-
-      # panel handles the loop; optimistic state is fine since HA isn't in charge
-      optimistic: true
-```
-
-### Remote variant
-
-Same shape, with the remote device's topics:
-
-```yaml
-      current_temperature_topic: "tele/tas_shedtemp/SENSOR"
-      current_temperature_template: "{{ value_json['DS18B20']['Temperature'] }}"
-      temperature_command_topic: "cmnd/tas_nspanel_shed/ATCExpect"
-      mode_command_topic: "cmnd/tas_nspanel_shed/ATCEnable"
-      action_topic: "stat/tas_shedtemp/POWER"   # last *commanded* state — no real feedback
-```
-
-Things to know:
+### Things to know
 
 - `stat/.../POWER` on the remote variant is the **last commanded** state, not measured
   heater operation — display it, but don't build safety logic on it
-- The panel's screen shows its own thermostat page (setpoint slider, enable toggle) and it
-  works alongside the HA climate card — both write the same persisted values
-- If you *want* HA schedules, automate `ATCExpect`/`ATCEnable` command publishes rather than
+- The panel's own thermostat page and the HA climate card write the same persisted
+  values — they coexist cleanly through the RESULT publishes
+- If you *want* HA schedules, automate `ATCExpect`/`ATCEnable` publishes rather than
   touching the relay directly — that keeps the safety logic in the loop
 
 ## Acknowledgements
